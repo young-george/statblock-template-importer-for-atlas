@@ -4,86 +4,160 @@ import {
 	MarkdownFileInfo,
 	Modal,
 	Notice,
-	Plugin,
+	Plugin, requestUrl, TFile,
 } from 'obsidian';
 import {
 	DEFAULT_SETTINGS,
-	MyPluginSettings,
-	SampleSettingTab,
+	StatblockTemplateImporterSettings,
+	StatblockTemplateImporterSettingsTab,
 } from './settings';
 
 // Remember to rename these classes and interfaces!
 
-export default class MyPlugin extends Plugin {
-	settings!: MyPluginSettings;
+export default class StatblockTemplateImporter extends Plugin {
+	settings!: StatblockTemplateImporterSettings;
 
-	async onload() {
-		await this.loadSettings();
+	async installUpdates() {
+		const templates = this.settings.templateUrls;
+		
+		const results = await Promise.all(templates.map(async (template) => this.installTemplate(template.url, true)));
+		if (results.every((result) => !result)) {
+			new Notice('No template updates were found.');
+		}
+	}
+	
+	async installTemplate(gitHubUrl: string, automaticUpdate = false): Promise<boolean> {
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (_evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
+		let cleanUrl = gitHubUrl.endsWith("/") ? gitHubUrl.slice(0, -1) : gitHubUrl;
+		
+		let suffix = '';
+		
+		if (!cleanUrl.includes('/releases/')){
+			suffix = '/releases/latest';
+		} else {
+			cleanUrl = cleanUrl.replace('/tag/',  '/tags/')
+		}
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
+		const releaseUrl = `${cleanUrl.replace('https://github.com/', 'https://api.github.com/repos/')}${suffix}`;
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			},
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (
-				editor: Editor,
-				_ctx: MarkdownView | MarkdownFileInfo,
-			) => {
-				editor.replaceSelection('Sample editor command');
-			},
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+		const response = await requestUrl(releaseUrl);
+		
+		if (response.status !== 200) {
+			new Notice(`Failed to fetch release details from ${releaseUrl}. Status: ${response.status}`);
+			return false;
+		}
+		
+		const releaseDetails = response.json;
 
-					// This command will only show up in Command Palette when the check function returns true
+		if (!releaseDetails || !releaseDetails.assets || releaseDetails.assets.length === 0) {
+			new Notice(`No assets found in the latest release of ${gitHubUrl}.`);
+			return false;
+		}
+		
+		const templateAssets = releaseDetails.assets.filter((a: any) => a.name.endsWith('.atlastemplate'));
+		if (templateAssets.length === 0) {
+			new Notice(`No .atlastemplate assets found in the latest release of ${gitHubUrl}.`);
+			return false;
+		}
+
+		const results = await Promise.all(templateAssets.map(async (templateAsset: any) => {
+			const templateContentResponse = await requestUrl(templateAsset.browser_download_url);
+			if (templateContentResponse.status !== 200) {
+				new Notice(`Failed to download template from ${templateAsset.browser_download_url}. Status: ${templateContentResponse.status}`);
+				return false;
+			}
+
+			const template = templateContentResponse.json;
+
+			const folder = 'atlas-vtt/statblock-templates';
+
+			if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
+				try {
+					await this.app.vault.createFolder(folder);
+				} catch {
+					/* folder already exists (race with another note); safe to ignore */
+				}
+			}
+			const templates = this.app.vault.getFolderByPath('atlas-vtt/statblock-templates')?.children;
+
+			const templateContents = await Promise.all(templates?.map(async (file) => ({
+				...file,
+				content: await this.app.vault.read(file as TFile)
+			})) ?? []);
+
+			const existingTemplate = templateContents.find((templateFile) => {
+				try {
+					const templateJson: { id: string } = JSON.parse(templateFile.content) as { id: string };
+					return templateJson.id == template.id;
+				} catch (e) {
+					return false;
+				}
+			});
+
+			if (!existingTemplate) {
+				await this.app.vault.create(`atlas-vtt/statblock-templates/${templateAsset.name}`, JSON.stringify(template, null, 2));
+				new Notice(`Template ${templateAsset.name} installed successfully.`);
+				if (!this.settings.templateUrls.some((template) => template.url === gitHubUrl)) {
+					this.settings.templateUrls.push({
+						name: templateAssets.map((a: any) => a.name.replace('.atlastemplate', '')).join(', '),
+						url: gitHubUrl
+					});
+					await this.saveSettings();
+				}
+				return true;
+			}
+
+			if (existingTemplate && JSON.parse(existingTemplate.content).version !== template.version) {
+				const fileToUpdate = this.app.vault.getFileByPath(`atlas-vtt/statblock-templates/${existingTemplate.name}`);
+				if (!fileToUpdate) {
+					new Notice(`Failed to locate existing template file for ${existingTemplate.name}.`);
 					return true;
 				}
+				await this.app.vault.modify(fileToUpdate as unknown as TFile, JSON.stringify(template, null, 2));
+				new Notice(`Template ${templateAsset.name} updated successfully.`);
+			}
+
+			if (!automaticUpdate) {
+				new Notice(`Failed to install ${templateAsset.name}. It may already be installed or up to date. Try deleting the template file and reinstalling.`);
+			}
+
+			return false;
+		}));
+		
+		const cssAssets = releaseDetails.assets.filter((a: any) => a.name.endsWith('.css'));
+
+		await Promise.all(cssAssets.map(async (cssAsset: any) => {
+			const cssContentResponse = await requestUrl(cssAsset.browser_download_url);
+			if (cssContentResponse.status !== 200) {
+				new Notice(`Failed to download CSS from ${cssAsset.browser_download_url}. Status: ${cssContentResponse.status}`);
 				return false;
-			},
-		});
+			}
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+			const cssContent = cssContentResponse.text;
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(activeDocument, 'click', (_evt: MouseEvent) => {
-			new Notice('Click');
-		});
+			const folder = `${this.app.vault.configDir}/snippets/`;
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(
-			window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000),
-		);
+			if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
+				try {
+					await this.app.vault.createFolder(folder);
+				} catch {
+					/* folder already exists (race with another note); safe to ignore */
+				}
+			}
+			
+			await this.app.vault.adapter.write(`${folder}/${cssAsset.name}`, cssContent);
+
+			return true;
+		}));
+		return results.every((result) => result);
+	}
+	
+		
+	
+	async onload() {
+		await this.loadSettings();
+		
+		this.addSettingTab(new StatblockTemplateImporterSettingsTab(this.app, this));
 	}
 
 	onunload() {}
@@ -92,23 +166,11 @@ export default class MyPlugin extends Plugin {
 		this.settings = Object.assign(
 			{},
 			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<MyPluginSettings>,
+			(await this.loadData()) as Partial<StatblockTemplateImporterSettings>,
 		);
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
 	}
 }

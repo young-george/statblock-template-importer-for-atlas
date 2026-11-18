@@ -1,11 +1,10 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "statblock-template-installer-for-atlas",
+	"name": "Statblock Template Installer for Atlas",
 	"version": "1.0.0",
-	"minAppVersion": "1.0.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+	"minAppVersion": "1.13.0",
+	"description": "Easily install and update statblock templates for Atlas VTT.",
+	"author": "young-george",
+	"authorUrl": "https://github.com/young-george",
+	"isDesktopOnly": true
 }

@@ -1,7 +1,7 @@
 {
 	"id": "statblock-template-installer-for-atlas",
 	"name": "Statblock Template Installer for Atlas",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "1.13.0",
 	"description": "Easily install and update statblock templates for Atlas VTT.",
 	"author": "young-george",

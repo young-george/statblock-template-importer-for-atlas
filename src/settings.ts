@@ -46,7 +46,7 @@ export class StatblockTemplateImporterSettingsTab extends PluginSettingTab {
 					.setIcon('plus-with-circle')
 					.setTooltip('Add new template')
 					.onClick(async () => {
-						new SampleModal(this.app, this.plugin).openWithCallback(url => {
+						new InstallerModal(this.app, this.plugin).openWithCallback(url => {
 							this.plugin.saveSettings().then(() => {
 								this.display();
 							})
@@ -63,7 +63,7 @@ export class StatblockTemplateImporterSettingsTab extends PluginSettingTab {
 								.setIcon('plus-with-circle')
 								.setTooltip('Add new template')
 								.onClick(async () => {
-									new SampleModal(this.app, this.plugin).openWithCallback(url => {
+									new InstallerModal(this.app, this.plugin).openWithCallback(url => {
 										this.plugin.saveSettings().then(() => {
 											this.display();
 										})
@@ -104,7 +104,7 @@ export class StatblockTemplateImporterSettingsTab extends PluginSettingTab {
 
 
 
-class SampleModal extends Modal {
+class InstallerModal extends Modal {
 	
 	statblockUrl: string = '';
 	plugin: IStatblockImporterPlugin;
